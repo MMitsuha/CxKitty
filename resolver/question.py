@@ -39,6 +39,7 @@ from .searcher.restapi import (
     JsonApiSearcher,
     LemonSearcher,
 )
+from .searcher.claude import ClaudeSearcher
 from .searcher.sqlite import SqliteSearcher
 
 # 所有的搜索器类
@@ -56,6 +57,7 @@ SEARCHERS = {
     "OpenAISearcher": OpenAISearcher,
     "OllamaSearcherAPI":OllamaSearcherAPI,
     "OaifreeSearcherAPI":OaifreeSearcherAPI,
+    "ClaudeSearcher": ClaudeSearcher,
 }
 
 
