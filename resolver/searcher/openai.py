@@ -1,13 +1,13 @@
-import json
 from openai import OpenAI
-import config
+
 from cxapi.schema import QuestionModel
-from . import SearcherBase, SearcherResp
 from logger import Logger
+
+from . import SearcherBase, SearcherResp
 
 
 class OpenAISearcher(SearcherBase):
-    """ChatGPT 在线答题器"""
+    """ChatGPT 在线答题器 (Responses API)"""
 
     client: OpenAI
     config: dict
@@ -19,9 +19,6 @@ class OpenAISearcher(SearcherBase):
         self.logger = Logger("OpenAISearcher")
 
     def invoke(self, question: QuestionModel) -> SearcherResp:
-
-        #self.logger.info("传入的question.options" + json.dumps(question.options))
-
         # 将选项从JSON转换成人类(GPT)易读形式
         options_str = ""
         if type(question.options) is not None:
@@ -33,64 +30,59 @@ class OpenAISearcher(SearcherBase):
                 for v in question.options:
                     options_str += v + ";"
 
-        self.logger.info(
-            "从 "
-            + self.config["prompt"]
-            + " 生成提问："
-            + str(self.config["prompt"]).format(
-                type=question.type.name,
-                value=question.value,
-                options=options_str,
-            ),
+        user_content = str(self.config["prompt"]).format(
+            type=question.type.name,
+            value=question.value,
+            options=options_str,
         )
+        self.logger.info("从 " + self.config["prompt"] + " 生成提问：" + user_content)
+
         try:
-            response = self.client.chat.completions.create(
+            stream = self.client.responses.create(
                 model=self.config["model"],
                 temperature=0.5,  # 答题场景适合把temperature调低
-                messages=[
-                    {"role": "system", "content": self.config["system_prompt"]},
+                instructions=self.config["system_prompt"],
+                input=[
                     {
                         "role": "user",
                         "content": str(self.config["prompt"]).format(
                             type="单选题",
-                            value="We didn’t have health____________ at the time and when I got a third infection, my parents couldn’t pay for the treatment.",
+                            value="We didn’t have health____________ at the time and when I got a "
+                            "third infection, my parents couldn’t pay for the treatment.",
                             options="选项：\nA. assurance;B. insurance;C. requirement;D. issure;",
-                        )
-                    },# 这里给个单选题回复示例供 AI 模仿
-                    {"role": "assistant", "content": "A. insurance"},
-                    {
-                        "role": "user",
-                        "content": str(self.config["prompt"]).format(
-                            type=question.type.name,
-                            value=question.value,
-                            options=options_str,
                         ),
-                    },
+                    },  # 这里给个单选题回复示例供 AI 模仿
+                    {"role": "assistant", "content": "A. insurance"},
+                    {"role": "user", "content": user_content},
                 ],
+                stream=True,
             )
 
-            response = response.choices[0].message.content
-            if response is None :
-                # 防止预处理时报错
-                response = ''
+            # 从流式事件中收集完整文本
+            response = ""
+            for event in stream:
+                if event.type == "response.output_text.delta":
+                    response += event.delta
+            if not response:
+                response = ""
         except Exception as err:
             return SearcherResp(-500, err.__str__(), self, question.value, None)
 
         # 单选题需要进一步预处理AI返回结果，以使 QuestionResolver 能正确命中
         if question.type.value is 0:
-            response = response.strip()# A. insurance
+            response = response.strip()
             for k, v in question.options.items():
-                #以 A. 开头、或者包含 insurance
-                if response.startswith(k+'.') or (v in response):
+                # 以 A. 开头、或者包含选项文本
+                if response.startswith(k + ".") or (v in response):
                     response = v
                     break
-        # 多选同理 
+        # 多选同理
         if question.type.value is 1:
             awa = ""
             for k, v in question.options.items():
                 if v in response:
-                    awa += v+"#"
+                    awa += v + "#"
             response = awa
-        
+
         self.logger.info("返回结果：" + response)
         return SearcherResp(0, "", self, question.value, response)
